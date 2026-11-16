@@ -19,11 +19,15 @@ CREATE DATABASE olist_test OWNER olist_user;
 ```
 python -m venv .venv
 .venv\Scripts\activate
+pip install -e ../stage-1-zahra-jafarii     # پکیج مرحله ۱ (نسخه 0.2.0 یا بالاتر)
 pip install -r requirements.txt
 pip install -e .
 python -m data_factory.cli
 python -m unittest discover tests
 ```
+
+- بارگذاری Olist از پکیج مرحله ۱ (`nyc311_factory`) انجام می‌شود؛ همین پکیج اعتبارسنجی، قرنطینه و `manifest` را می‌دهد.
+- برای ریختن خروجی مرحله ۱ در schema `stage1`: `python -m data_factory.cli --stage1-config ../stage-1-zahra-jafarii/config.json`
 
 - فرمان `data_factory.cli` از دیتابیس خالی، جدول‌ها، داده، `View`ها، `Function`، `Procedure` و `Index`های تأییدشده را می‌سازد.
 - نوتبوک `solution.ipynb` را با `Restart & Run All` اجرا کن. دیتابیس را خودش از صفر می‌سازد.
