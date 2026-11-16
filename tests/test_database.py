@@ -1,21 +1,23 @@
 import datetime
 import os
+import tempfile
 import unittest
+from pathlib import Path
 
-import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from data_factory.config import SQL_DIR
-from data_factory.db import make_engine, run_sql_file
-from data_factory.destinations.postgres import PostgresDestination
+from data_factory.db import count_rows, make_engine, run_sql_file
+from data_factory.keys import database_key_provider
+from data_factory.olist_load import load_table
 
 TEST_URL = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+psycopg2://olist_user:olist_pass@localhost:5432/olist_test",
 )
-SQL_FILES = ["001_schemas.sql", "002_tables.sql", "003_views.sql",
-             "004_functions.sql", "005_procedures.sql"]
+SQL_FILES = ["001_schemas.sql", "002_tables.sql", "002_quarantine_tables.sql",
+             "003_views.sql", "004_functions.sql", "005_procedures.sql"]
 
 
 def make_key(prefix):
@@ -130,17 +132,53 @@ class DatabaseLayerTest(unittest.TestCase):
                     {"order": make_key("o1"), "product": make_key("p1"),
                      "seller": make_key("s1")})
 
-    def test_write_clean_twice_adds_rows_once(self):
-        destination = PostgresDestination(self.engine)
-        frame = pd.DataFrame({
-            "customer_id": [make_key("c9")], "customer_unique_id": [make_key("u9")],
-            "customer_zip_code_prefix": ["02002"], "customer_city": ["rio"],
-            "customer_state": ["RJ"],
-        })
-        before = destination.count_rows("customers")
-        destination.write_clean("customers", frame)
-        destination.write_clean("customers", frame)
-        self.assertEqual(destination.count_rows("customers"), before + 1)
+
+CUSTOMER_HEADER = ("customer_id,customer_unique_id,customer_zip_code_prefix,"
+                   "customer_city,customer_state\n")
+ORDER_HEADER = ("order_id,customer_id,order_status,order_purchase_timestamp,order_approved_at,"
+                "order_delivered_carrier_date,order_delivered_customer_date,"
+                "order_estimated_delivery_date\n")
+
+
+class FactoryLoadTest(unittest.TestCase):
+    """The stage 1 factory writing into the stage 2 tables (needs the test database)."""
+
+    def setUp(self):
+        self.engine = make_engine(TEST_URL)
+        self.addCleanup(self.engine.dispose)
+        build_test_schema(self.engine)
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.root = Path(self.folder.name)
+
+    def load(self, table, file_name, content):
+        path = self.root / file_name
+        path.write_text(content, encoding="utf-8")
+        provider = database_key_provider(self.engine, "olist")
+        return load_table(table, path, provider, self.root / "curated",
+                          engine=self.engine, threshold=0.9)
+
+    def test_loading_a_table_twice_keeps_one_copy(self):
+        content = (CUSTOMER_HEADER + f"{make_key('c9')},{make_key('u9')},02002,rio,RJ\n"
+                   + f"{make_key('c8')},{make_key('u8')},02003,,RJ\n")
+        for _ in range(2):
+            self.load("customers", "customers.csv", content)
+        self.assertEqual(count_rows(self.engine, "olist", "customers"), 1)
+        self.assertEqual(count_rows(self.engine, "olist", "customers_quarantine"), 1)
+
+    def test_order_without_customer_lands_in_quarantine(self):
+        self.load("customers", "customers.csv",
+                  CUSTOMER_HEADER + f"{make_key('c1')},{make_key('u1')},01001,sp,SP\n")
+        orders = (ORDER_HEADER
+                  + f"{make_key('o1')},{make_key('c1')},delivered,2017-01-01 10:00:00,,,,2017-01-10 00:00:00\n"
+                  + f"{make_key('o2')},{make_key('c7')},delivered,2017-01-01 10:00:00,,,,2017-01-10 00:00:00\n")
+        self.load("orders", "orders.csv", orders)
+        self.assertEqual(count_rows(self.engine, "olist", "orders"), 1)
+        with self.engine.connect() as connection:
+            reasons = connection.execute(text(
+                "SELECT reason_codes FROM olist.v_quarantine WHERE source_table = :name"),
+                {"name": "orders"}).scalars().all()
+        self.assertEqual(reasons, ["FK_customer_id_customers"])
 
 
 if __name__ == "__main__":
