@@ -19,7 +19,7 @@ CREATE DATABASE olist_test OWNER olist_user;
 ```
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ../stage-1-zahra-jafarii     # پکیج مرحله ۱ (نسخه 0.2.0 یا بالاتر)
+pip install -e ../stage-1-zahra-jafari     # پکیج مرحله ۱ (نسخه 0.2.0 یا بالاتر)
 pip install -r requirements.txt
 pip install -e .
 python -m data_factory.cli
