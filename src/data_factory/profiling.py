@@ -1,7 +1,7 @@
 import pandas as pd
 
 from data_factory.contracts import TABLE_SPECS
-from data_factory.loader import read_raw_chunks
+from data_factory.prepare import read_raw_chunks
 
 PRIMARY_KEYS = {
     "category_translation": ["product_category_name"],
